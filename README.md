@@ -11,6 +11,6 @@ This is a rust rewrite based on plojyon's project.
 /timetable/{uni}/{group}
 ```
 
-Currently supported:\
+Currently supported:
 
 - FRI
