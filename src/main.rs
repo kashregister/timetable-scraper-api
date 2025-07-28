@@ -151,7 +151,7 @@ async fn timetable(path: web::Path<String>) -> impl Responder {
         // Push the time block to the list
         json.push(temp_block);
     }
-    HttpResponse::Ok().json(serde_json::to_string(&json).unwrap())
+    HttpResponse::Ok().json(json)
 }
 
 #[actix_web::main]
