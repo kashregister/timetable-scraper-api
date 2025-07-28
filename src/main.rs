@@ -39,7 +39,7 @@ fn map_day(day: String) -> isize {
 
 #[get("/")]
 async fn root() -> impl Responder {
-    HttpResponse::Ok().body("Hello\nCurrently supported:\nFRI")
+    HttpResponse::Ok().body("Hello\nCurrently supported timetables:\nFRI")
 }
 
 #[get("/timetable/fri/{id}")]
