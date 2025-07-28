@@ -1,4 +1,4 @@
-use actix_web::{App, HttpResponse, HttpServer, Responder, get};
+use actix_web::{App, HttpResponse, HttpServer, Responder, get, web};
 use regex::Regex;
 use soup::prelude::*;
 
@@ -39,12 +39,16 @@ fn map_day(day: String) -> isize {
 
 #[get("/")]
 async fn root() -> impl Responder {
-    HttpResponse::Ok().body("Pozdrav")
+    HttpResponse::Ok().body("Hello\nCurrently supported:\nFRI")
 }
 
-#[get("/timetable")]
-async fn timetable() -> impl Responder {
-    let url = "https://urnik.fri.uni-lj.si/timetable/fri-2024_2025-letni/allocations?group=59031";
+#[get("/timetable/fri/{id}")]
+async fn timetable(path: web::Path<String>) -> impl Responder {
+    let id = path.into_inner();
+    let url = format!(
+        "https://urnik.fri.uni-lj.si/timetable/fri-2024_2025-letni/allocations?group={}",
+        id
+    );
     let body: String = ureq::get(url)
         .call()
         .unwrap()
@@ -147,7 +151,6 @@ async fn timetable() -> impl Responder {
         // Push the time block to the list
         json.push(temp_block);
     }
-
     HttpResponse::Ok().json(serde_json::to_string(&json).unwrap())
 }
 
