@@ -2,30 +2,31 @@ use actix_web::{App, HttpResponse, HttpServer, Responder, get, web};
 use regex::Regex;
 use soup::prelude::*;
 
+use actix_governor::*;
 use serde_derive::Deserialize;
 use serde_derive::Serialize;
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TimeBlock {
-    pub dan: isize,
-    pub predmet: Predmet,
-    pub profesor: String,
-    pub tip: String,
-    pub trajanje: isize,
-    pub ucilnica: String,
-    pub ura: isize,
+    pub day: usize,
+    pub time: usize,
+    pub duration: usize,
+    pub professor: String,
+    pub classroom: String,
+    pub subject: Subject,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Predmet {
-    pub abbr: String,
-    pub location: String,
+pub struct Subject {
     pub name: String,
+    pub abbreviation: String,
+    pub location: String,
+    pub r#type: String,
 }
 
-fn map_day(day: String) -> isize {
+fn map_day(day: String) -> usize {
     let conv = day.as_str();
     match conv {
         "MON" => 0,
@@ -33,28 +34,61 @@ fn map_day(day: String) -> isize {
         "WED" => 2,
         "THU" => 3,
         "FRI" => 4,
-        _ => -1,
+        _ => 0,
+    }
+}
+impl Default for TimeBlock {
+    fn default() -> Self {
+        TimeBlock {
+            day: 0,
+            time: 0,
+            professor: "N/A".to_string(),
+            classroom: "N/A".to_string(),
+            duration: 0,
+            subject: Subject::default(),
+        }
+    }
+}
+impl Default for Subject {
+    fn default() -> Self {
+        Subject {
+            r#type: "N/A".to_string(),
+            name: "N/A".to_string(),
+            abbreviation: "N/A".to_string(),
+            location: "N/A".to_string(),
+        }
     }
 }
 
 #[get("/")]
 async fn root() -> impl Responder {
-    HttpResponse::Ok().body("Hello\nCurrently supported timetables:\nFRI")
+    HttpResponse::Ok().body(
+        "Hello!\n\n\
+        Endpoints:\n\
+        / - current page\n\
+        /timetable/{uni}/{group}\n\
+        \n\
+        Currently supported unis:\n\
+        - fri",
+    )
 }
 
-#[get("/timetable/fri/{id}")]
+#[get("/timetable/fri/{group}")]
 async fn timetable(path: web::Path<String>) -> impl Responder {
-    let id = path.into_inner();
+    let group = path.into_inner();
     let url = format!(
         "https://urnik.fri.uni-lj.si/timetable/fri-2024_2025-letni/allocations?group={}",
-        id
+        group
     );
     let body: String = ureq::get(url)
         .call()
         .unwrap()
         .body_mut()
         .read_to_string()
-        .unwrap();
+        .unwrap_or("Error fetching".to_string());
+    if body == "Error fetching" {
+        HttpResponse::Ok().body("Error fetching");
+    }
     let soup = Soup::new(&body);
 
     let results: Vec<_> = soup.attr("class", "grid-entry").find_all().collect();
@@ -63,28 +97,16 @@ async fn timetable(path: web::Path<String>) -> impl Responder {
     let mut json = Vec::new();
     for grid_entry in &results {
         // Declare the object for storing temporary data
-        let mut temp_block: TimeBlock = TimeBlock {
-            ura: -1,
-            profesor: "N/A".to_string(),
-            dan: -1,
-            tip: "N/A".to_string(),
-            trajanje: -1,
-            ucilnica: "N/A".to_string(),
-            predmet: Predmet {
-                name: "N/A".to_string(),
-                abbr: "N/A".to_string(),
-                location: "N/A".to_string(),
-            },
-        };
+        let mut temp_block = TimeBlock::default();
         // Find the style attribute for getting the row and span values
         let style = grid_entry.attr_name("style").find().expect("N/A").display();
         let time_duration = rgx_time_duration.captures(&style);
         if let Some(exists) = time_duration {
-            temp_block.ura = 6 + exists[1].parse::<isize>().unwrap();
-            temp_block.trajanje = exists[2].parse::<isize>().unwrap();
+            temp_block.time = 6 + exists[1].parse::<usize>().unwrap();
+            temp_block.duration = exists[2].parse::<usize>().unwrap();
         } else {
-            temp_block.ura = -1;
-            temp_block.trajanje = -1;
+            temp_block.time = 0;
+            temp_block.duration = 0;
         }
         // Find the day attribute
         let dan = grid_entry
@@ -97,9 +119,9 @@ async fn timetable(path: web::Path<String>) -> impl Responder {
             .to_string();
 
         if let Some(exists) = rgx_day.captures(&dan) {
-            temp_block.dan = map_day(exists[1].to_string());
+            temp_block.day = map_day(exists[1].to_string());
         } else {
-            temp_block.dan = -1;
+            temp_block.day = 0;
         }
         // Subject attributes
         let subject = grid_entry
@@ -111,16 +133,19 @@ async fn timetable(path: web::Path<String>) -> impl Responder {
             .to_string();
         // Subject type
         //		tip = entry.find(class_='entry-type').text[1:].strip();
-        let subject_type = grid_entry
+        let mut subject_type = grid_entry
             .attr("class", "entry-type")
             .find()
             .expect("N/A")
             .text()
             .trim()
             .to_string();
+
+        subject_type.retain(|c| c != '|');
+        _ = subject_type.trim();
+
         // Professor
-        // profesor = entry.find(class_='link-teacher').text.title();
-        let temp_profesor = grid_entry
+        let temp_professor = grid_entry
             .attr("class", "link-teacher")
             .find()
             .expect("N/A")
@@ -128,8 +153,6 @@ async fn timetable(path: web::Path<String>) -> impl Responder {
             .trim()
             .to_string();
         // Classroom
-        // ucilnica = entry.find(class_='link-classroom').text;
-
         let temp_classroom = grid_entry
             .attr("class", "link-classroom")
             .find()
@@ -138,16 +161,17 @@ async fn timetable(path: web::Path<String>) -> impl Responder {
             .trim()
             .to_string();
         // Init the object
-        let temp_predmet: Predmet = Predmet {
+        let temp_predmet: Subject = Subject {
             // Name is the same as the abbreviation for now
             name: subject.to_string(),
-            abbr: subject.to_string(),
+            abbreviation: subject.to_string(),
             location: "FRI".to_string(),
+            r#type: subject_type.to_string(),
         };
-        temp_block.profesor = temp_profesor.to_string();
-        temp_block.predmet = temp_predmet;
-        temp_block.tip = subject_type.to_string();
-        temp_block.ucilnica = temp_classroom.to_string();
+
+        temp_block.professor = temp_professor.to_string();
+        temp_block.subject = temp_predmet;
+        temp_block.classroom = temp_classroom.to_string();
         // Push the time block to the list
         json.push(temp_block);
     }
@@ -156,8 +180,18 @@ async fn timetable(path: web::Path<String>) -> impl Responder {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    HttpServer::new(|| App::new().service(root).service(timetable))
-        .bind(("127.0.0.1", 8080))?
-        .run()
-        .await
+    let governor_conf = GovernorConfigBuilder::default()
+        .seconds_per_request(60)
+        .burst_size(3)
+        .finish()
+        .unwrap();
+    HttpServer::new(move || {
+        App::new()
+            .wrap(Governor::new(&governor_conf))
+            .service(root)
+            .service(timetable)
+    })
+    .bind(("127.0.0.1", 8080))?
+    .run()
+    .await
 }
