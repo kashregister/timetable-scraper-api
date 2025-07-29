@@ -1,4 +1,4 @@
-# FRI timetable scraper for custom frontends
+# Timetable scraper for custom frontends
 
 This is a rust rewrite based on plojyon's project.
 
@@ -13,4 +13,6 @@ This is a rust rewrite based on plojyon's project.
 
 Currently supported:
 
-- FRI
+- fri
+
+**Feel free to make a PR of your own!**
